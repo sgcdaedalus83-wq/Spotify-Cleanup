@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Spotify Reset Tool</title>
+    <style>
+        :root { --spotify-green: #1DB954; --danger: #e91429; --bg: #121212; --card: #181818; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: var(--bg); color: white; margin: 0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .container { background: var(--card); padding: 30px; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); width: 90%; max-width: 500px; text-align: center; }
+        h1 { color: var(--spotify-green); margin-bottom: 10px; }
+        p { color: #b3b3b3; font-size: 0.9em; margin-bottom: 25px; }
+        .btn { width: 100%; padding: 15px; border: none; border-radius: 30px; font-weight: bold; cursor: pointer; transition: transform 0.2s; font-size: 16px; margin-bottom: 10px; }
+        .btn:active { transform: scale(0.98); }
+        #loginBtn { background-color: var(--spotify-green); color: white; }
+        #cleanBtn { background-color: var(--danger); color: white; display: none; }
+        .progress-container { margin-top: 20px; display: none; }
+        .progress-bar { width: 100%; background: #333; height: 10px; border-radius: 5px; overflow: hidden; margin-top: 10px; }
+        #progressFill { width: 0%; height: 100%; background: var(--spotify-green); transition: width 0.3s; }
+        #log { margin-top: 20px; font-size: 12px; color: #888; text-align: left; max-height: 100px; overflow-y: auto; background: #000; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Spotify Reset 🧹</h1>
+    <p>Twoja osobista aplikacja do czyszczenia biblioteki.</p>
+
+    <script>
+        // --- KONFIGURACJA (PODMIEŃ TE DANE) ---
+        const CLIENT_ID = 'WPISZ_TUTAJ_SWÓJ_CLIENT_ID'; 
+        const REDIRECT_URI = 'https://TWOJA_NAZWA.github.io/spotify-cleaner/'; 
+        // --------------------------------------
+
+        const SCOPES = 'user-library-modify user-library-read playlist-modify-private playlist-modify-public user-follow-modify user-follow-read';
+        let accessToken = '';
+
+        window.onload = () => {
+            const hash = window.location.hash;
+            if (hash.includes('access_token')) {
+                accessToken = new URLSearchParams(hash.substring(1)).get('access_token');
+                document.getElementById('loginBtn').style.display = 'none';
+                document.getElementById('cleanBtn').style.display = 'block';
+                logMsg('Połączono ze Spotify. Gotowy do akcji.');
+                window.history.pushState("", document.title, window.location.pathname);
+            }
+        };
+
+        function login() {
+            window.location.href = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
+        }
+
+        function logMsg(msg) {
+            const logDiv = document.getElementById('log');
+            logDiv.innerHTML += `<div>> ${msg}</div>`;
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function fetchAPI(endpoint, method = 'GET', body = null) {
+            const options = { method, headers: { 'Authorization': `Bearer ${accessToken}`, 'Content-Type': 'application/json' }};
+            if (body) options.body = JSON.stringify(body);
+            const res = await fetch(`https://api.spotify.com/v1${endpoint}`, options);
+            return res.status === 204 ? null : await res.json();
+        }
+
+        async function startCleaning() {
+            if (!confirm("Czy na pewno chcesz usunąć WSZYSTKO? Tego nie da się cofnąć!")) return;
+            
+            document.getElementById('cleanBtn').disabled = true;
+            document.querySelector('.progress-container').style.display = 'block';
+            const fill = document.getElementById('progressFill');
+
+            try {
+                const steps = ['tracks', 'albums', 'following', 'playlists'];
+                for (let i = 0; i < steps.length; i++) {
+                    const type = steps[i];
+                    logMsg(`Czyszczenie: ${type}...`);
+                    
+                    let done = false;
+                    while (!done) {
+                        let data;
+                        if (type === 'following') data = await fetchAPI('/me/following?type=artist&limit=50');
+                        else if (type === 'playlists') data = await fetchAPI('/me/playlists?limit=50');
+                        else data = await fetchAPI(`/me/${type}?limit=50`);
+
+                        const items = type === 'following' ? data.artists.items : data.items;
+                        if (!items || items.length === 0) { done = true; break; }
+
+                        const ids = items.map(item => type === 'playlists' ? item.id : (item.track?.id || item.album?.id || item.id));
+                        
+                        if (type === 'tracks') await fetchAPI('/me/tracks', 'DELETE', ids);
+                        if (type === 'albums') await fetchAPI('/me/albums', 'DELETE', ids);
+                        if (type === 'following') await fetchAPI(`/me/following?type=artist&ids=${ids.join(',')}`, 'DELETE');
+                        if (type === 'playlists') {
+                            for(let id of ids) await fetchAPI(`/playlists/${id}/followers`, 'DELETE');
+                        }
+
+                        fill.style.width = `${((i + 1) / steps.length) * 100}%`;
+                        logMsg(`Usunięto ${ids.length} elementów z kategorii ${type}...`);
+                    }
+                }
+                logMsg('<b>KONTO WYCZYSZCZONE!</b>');
+                alert("Sukces! Twoje Spotify jest teraz puste.");
+            } catch (e) {
+                logMsg('Błąd: ' + e.message);
+            }
+        }
+    </script>
+
+    <button id="loginBtn" class="btn" onclick="login()">Zaloguj przez Spotify</button>
+    <button id="cleanBtn" class="btn" onclick="startCleaning()">ROZPOCZNIJ CZYSZCZENIE</button>
+
+    <div class="progress-container">
+        <span id="progressText">Postęp całkowity:</span>
+        <div class="progress-bar"><div id="progressFill"></div></div>
+    </div>
+
+    <div id="log">Czekam na akcję...</div>
+</div>
+
+</body>
+</html>
